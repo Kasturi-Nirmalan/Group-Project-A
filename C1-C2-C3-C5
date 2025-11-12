@@ -1,0 +1,522 @@
+import numpy as np
+import math
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+# PHYSICAL CONSTANTS (AU, yr, M_Sun)
+# In astronomical units (AU, yr, M_Sun)
+# Kepler’s third law simplifies to:  T² = a³  ->  G = 4π² AU³/M_Sun/yr²
+G = 4 * math.pi**2 # Gravitational constant in AU³/M_Sun/yr²
+M_sun = 1.0 # Solar mass = 1 M_Sun
+
+
+
+# C2: DERIVE GENERAL INITIAL CONDITIONS AT PERIHELION
+def initial_conditions(a=0.387, e=0.2056):
+    """
+    Derive initial conditions for an elliptical orbit
+    with semi-major axis `a` (AU) and eccentricity `e`, starting at perihelion.
+
+    At perihelion: Radial velocity = 0 -> only tangential velocity.
+
+    Derivation:
+      - Perihelion distance:      r_p = a * (1 - e) 
+      - Orbital energy:  ε = -G * M / (2a)
+      - Angular momentum: h = r_p * v_p = sqrt(G * M * a * (1 - e²))   [elliptic orbit]
+      - Combine to solve for v_p:
+          v_p² = G * M * (1 + e) / [a * (1 - e)]
+
+    Units: G in AU³/M_Sun/yr², M=1, a in AU → v in AU/yr.
+    """
+    r_peri = a * (1 - e) # perihelion distance (AU)
+    v_peri = math.sqrt(G * (1 + e) / (a * (1 - e)))  # perihelion speed (AU/yr)
+
+    x0, y0 = r_peri, 0.0
+    vx0, vy0 = 0.0, v_peri # radial velocity = 0 at perihelion
+
+    return x0, y0, vx0, vy0, r_peri, v_peri
+
+
+
+# C1: EULER’S METHOD (Euler–Cromer)
+
+def euler_orbit(a, e, vx0, vy0, dt=1e-4, num_orbits=1):
+    """
+    Integrate orbit using Euler’s method (*Euler–Cromer).
+    Equations of motion (2D):
+        d²x/dt² = -G M x / r³
+        d²y/dt² = -G M y / r³
+
+    Standard Euler Method: 
+        v_{n+1} = v_n + a_n dt
+        x_{n+1} = x_n + v_n dt    <- uses old v -> energy grows
+    Euler–Cromer:
+        v_{n+1} = v_n + a_n dt
+        x_{n+1} = x_n + v_{n+1} dt <- uses new v -> better energy/angular momentum
+    """
+    # Initial state at perihelion
+    r_peri = a * (1 - e)
+    x, y = r_peri, 0.0
+    vx, vy = vx0, vy0
+
+    # Kepler period from T² = a³  ->  T = a^(3/2) years
+    T = a**1.5
+    total_time = num_orbits * T
+    nsteps = int(np.ceil(total_time / dt))
+
+    # Allocate arrays for trajectory
+    times = np.zeros(nsteps + 1)
+    xs = np.zeros(nsteps + 1)
+    ys = np.zeros(nsteps + 1)
+    vxs = np.zeros(nsteps + 1)
+    vys = np.zeros(nsteps + 1)
+
+    # Store initial conditions (t=0)
+    times[0], xs[0], ys[0], vxs[0], vys[0] = 0.0, x, y, vx, vy
+
+    # Main integration loop
+    for i in range(nsteps):
+        # Current distance from Sun (at origin)
+        r = math.hypot(x, y)
+
+        # Newtonian acceleration: a_arrow = - G * M * r_arrow / r³
+        ax = -G * x / (r**3)
+        ay = -G * y / (r**3)
+
+        # Euler–Cromer update:
+        vx += ax * dt               # v_{n+1} = v_n + a_n dt
+        vy += ay * dt
+        x += vx * dt                # x_{n+1} = x_n + v_{n+1} dt
+        y += vy * dt
+
+        # Store state
+        times[i+1] = times[i] + dt
+        xs[i+1] = x
+        ys[i+1] = y
+        vxs[i+1] = vx
+        vys[i+1] = vy
+
+    return times, xs, ys, vxs, vys, T
+
+
+
+# RUN & PLOT MERCURY (C1 + C2)
+
+def run_mercury_orbit():
+    # Mercury orbital parameters (from NASA)
+    a = 0.387 # AU
+    e = 0.2056 # dimensionless
+    dt = 1e-4 # yr/step (~0.0365 days)
+    num_orbits = 1
+
+    # Get correct initial conditions (C2)
+    x0, y0, vx0, vy0, r_peri, v_peri = initial_conditions(a, e)
+
+    print("=== MERCURY ORBIT INITIAL CONDITIONS (C2) ===")
+    print(f"Semi-major axis a = {a} AU")
+    print(f"Eccentricity e = {e}")
+    print(f"Perihelion distance r_p = {r_peri:.6f} AU")
+    print(f"Perihelion speed v_p = {v_peri:.6f} AU/yr  (≈12 AU/yr as suggested)")
+    print()
+
+    # Simulate orbit (C1)
+    times, xs, ys, vxs, vys, T = euler_orbit(a, e, vx0, vy0, dt, num_orbits)
+
+    # Save full trajectory to CSV
+    df = pd.DataFrame({
+        "time_yr": times,
+        "x_AU": xs,
+        "y_AU": ys,
+        "vx_AU_per_yr": vxs,
+        "vy_AU_per_yr": vys
+    })
+    csv_path = "mercury_euler_C1C2.csv" 
+    df.to_csv(csv_path, index=False)
+
+    print("=== SIMULATION RESULTS (C1) ===")
+    print(f"Kepler period (T) = {T:.6f} yr  (should be ~0.2408 yr)")
+    print(f"Total steps = {len(times)}")
+    print(f"Data saved to: {csv_path}\n")
+
+    # Plot orbit
+    plt.figure(figsize=(6,6))
+    plt.plot(xs, ys, label="Euler orbit")
+    plt.scatter([0], [0], color="orange", s=80, label="Sun", zorder=5)
+    plt.xlabel("x (AU)")
+    plt.ylabel("y (AU)")
+    plt.title(f"Mercury Orbit (Euler + Correct ICs)\nΔt = {dt}, T = {T:.4f} yr")
+    plt.gca().set_aspect("equal", adjustable="box")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.show()
+
+
+run_mercury_orbit()
+
+#%%
+
+
+# C2: GENERAL INITIAL CONDITIONS + MULTIPLE ECCENTRICITIES
+
+def analytic_ellipse(a, e, npts=500):
+    """
+    Generate the Kepler ellipse for comparison.
+    Polar form: r(θ) = a(1 - e²) / (1 + e * cosθ).
+    """
+    theta = np.linspace(0, 2 * np.pi, npts)
+    r = a * (1 - e**2) / (1 + e * np.cos(theta))
+    x = r * np.cos(theta)
+    y = r * np.sin(theta)
+    return x, y
+
+
+def run_orbit_for_plotting(a, e, dt=1e-4, num_orbits=1):
+    """
+    Simulate one orbit and return position arrays + physical parameters.
+    Returns: xs, ys, T, r_peri, v_peri
+    """
+
+    x0, y0, vx0, vy0, r_peri, v_peri = initial_conditions(a, e)
+
+    # Simulate using Euler–Cromer (6 outputs: times, xs, ys, vxs, vys, T)
+    times, xs, ys, vxs, vys, T = euler_orbit(a, e, vx0, vy0, dt=dt, num_orbits=num_orbits)
+
+    return xs, ys, T, r_peri, v_peri
+
+
+# Run and plot for multiple eccentricities
+a = 0.387  # AU (Mercury's semi-major axis)
+eccs = [0.0, 0.2, 0.4, 0.6]
+dt = 1e-4
+num_orbits = 1
+
+plt.figure(figsize=(8, 8))
+print("=== C2: ORBITS WITH SAME a = 0.387 AU, VARYING e ===")
+
+for i, e in enumerate(eccs):
+    # Simulate orbit
+    xs, ys, T, r_peri, v_peri = run_orbit_for_plotting(a, e, dt, num_orbits)
+
+    df = pd.DataFrame({"x_AU": xs, "y_AU": ys})
+    filename = f"orbit_a{a}_e{e:.2f}.csv"
+    df.to_csv(filename, index=False)
+
+    # Plot numerical orbit
+    plt.plot(xs, ys, label=f"Numerical: e = {e}", lw=1.8, alpha=0.9)
+
+    # Plot analytic ellipse 
+    xe, ye = analytic_ellipse(a, e)
+    if i == 0:
+        plt.plot(xe, ye, "k--", label="Analytic Kepler ellipse", lw=1.2)
+    else:
+        plt.plot(xe, ye, "k--", lw=1.2, alpha=0.6)
+
+    # Print perihelion inital conditions
+    print(f"e = {e:3.1f} → r_peri = {r_peri:6.4f} AU, v_peri = {v_peri:6.4f} AU/yr, T = {T:6.4f} yr")
+
+# Sun at origin
+plt.scatter(0, 0, color="orange", s=150, marker="*", label="Sun", zorder=10)
+
+plt.gca().set_aspect("equal", adjustable="box")
+plt.xlabel("x (AU)", fontsize=12)
+plt.ylabel("y (AU)", fontsize=12)
+plt.title("C2: Elliptical Orbits with Fixed Semi-Major Axis (a = 0.387 AU)", fontsize=13)
+plt.grid(True, alpha=0.4)
+plt.legend(loc="upper right", fontsize=10)
+plt.tight_layout()
+plt.show()
+
+#%%
+
+# C3: CONVERGENCE TEST (circular orbit -> closed form)
+
+def euler_circular_error(dt=1e-4, fraction=0.1):
+    """
+    Simulate circular orbit (a=1, e=0 -> T=1 yr) for a fraction of orbit.
+    Exact solution: x(t) = cos(2π * t / T), y(t) = sin(2π * t / T)
+    """
+    a = 1.0
+    # Initial conditions for circular orbit: r = a, v = sqrt(GM/a)
+    x, y = a, 0.0
+    vx, vy = 0.0, math.sqrt(G / a)  # since M=1
+
+    T = a**1.5  
+    total_time = fraction * T
+    nsteps = int(total_time / dt)
+
+    # Integrate (Euler–Cromer)
+    for _ in range(nsteps):
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        vx += ax * dt
+        vy += ay * dt
+        x += vx * dt
+        y += vy * dt
+
+    # Exact x at time = fraction * T
+    theta_exact = 2 * math.pi * fraction
+    x_exact = a * math.cos(theta_exact)
+    error = abs(x - x_exact)
+    return error
+
+
+
+# FIT CONVERGENCE ORDER
+
+from scipy.optimize import curve_fit
+from scipy import stats
+
+dts = np.array([1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5])
+errors = np.array([euler_circular_error(dt) for dt in dts])
+
+print("Δt\t\t | Global error in x")
+print("-"*35)
+for dt, err in zip(dts, errors):
+    print(f"{dt:.1e}\t | {err:.2e}")
+
+# Log-log linear regression: log(error) = log(C) + n * log(dt)
+log_dt = np.log10(dts)
+log_err = np.log10(errors)
+slope, intercept, r_value, _, std_err = stats.linregress(log_dt, log_err)
+n_fit = slope
+C_fit = 10**intercept
+
+print(f"\nConvergence order (n) = {n_fit:.3f} ± {std_err:.3f}  (R² = {r_value**2:.4f})")
+print("-> Expected n = 1 for Euler. Close to 1? Yes -> implementation is consistent.")
+
+# Plot
+plt.figure(figsize=(6,4))
+plt.loglog(dts, errors, "o", label="Euler error")
+plt.loglog(dts, C_fit * dts**n_fit, "--", label=f"Fit: n = {n_fit:.3f}")
+plt.xlabel("Δt (yr)")
+plt.ylabel("Global error in x")
+plt.title("Convergence of Euler–Cromer (circular orbit, 0.1 orbit)")
+plt.legend(); plt.grid(True, which="both", ls="--", alpha=0.5)
+plt.show()
+
+#%%
+
+# C5: GENERAL RELATIVITY CORRECTION
+
+# Set USE_GR = True or False here to enable/disable GR
+USE_GR = True
+
+# Speed of light in AU/yr
+# c = 299792458 m/s, 1 AU = 149597870700 m, 1 yr = 365.25*24*3600 s
+c_AU_per_yr = 299792458 * 365.25 * 24 * 3600 / 149597870700  # = 63239.7263 AU/yr
+G = 4 * math.pi**2
+M_sun = 1.0
+
+
+def acceleration_gr(x, y, gr=False, c_factor=100.0):
+    """
+    Compute acceleration with GR correction (Eq. 10):
+        F_arrow = -[ GMm/r² + (3/2) mM²G² / (c²r³) ] r_hat
+    → a_arrow = F_arrow/m = -[ GM/r² + (3/2) G²M² / (c²r³) ] r_hat
+
+    In Cartesian coordinates (r_hat = (x, y)/r):
+        a_x = -GM x / r³  - (3/2) G²M²x / (c²r⁴)
+        a_y = -GM y / r³  - (3/2) G²M²y / (c²r⁴)
+
+    c_eff = c / c_factor (e.g. c_factor=100 -> 10⁴ times boost in sigma).
+    """
+    r = math.hypot(x, y)
+    if r == 0:
+        return 0.0, 0.0
+
+    # Newtonian acceleration: -GM * r_arrow / r³
+    ax = -G * x / (r**3)
+    ay = -G * y / (r**3)
+    
+    gr = gr or USE_GR
+
+    if gr:
+        c_eff = c_AU_per_yr / c_factor
+        # GR correction: -(3/2) G²M² / (c_eff²r⁴) * (x, y)
+        gr_coeff = -1.5 * (G**2) * (M_sun**2) / (c_eff**2 * r**4)
+        ax += gr_coeff * x
+        ay += gr_coeff * y
+
+    return ax, ay
+
+
+def euler_step_gr(x, y, vx, vy, dt, gr=False, c_factor=100.0):
+    """One Euler–Cromer step with optional GR."""
+    ax, ay = acceleration_gr(x, y, gr=gr, c_factor=c_factor)
+    vx += ax * dt
+    vy += ay * dt
+    x += vx * dt
+    y += vy * dt
+    return x, y, vx, vy
+
+
+def integrate_orbit_gr(a=0.387, e=0.2056, dt=1e-4, num_orbits=20, gr=False, c_factor=100.0):
+    """Integrate orbit using Euler–Cromer 
+    Returns time, positions, velocities, and Kepler period."""
+    x, y, vx, vy, r_p, v_p = initial_conditions(a, e)
+    T = a**1.5  # Kepler period (T² = a³)
+    nsteps = int(num_orbits * T / dt)
+
+    t = np.zeros(nsteps + 1)
+    xs = np.zeros(nsteps + 1)
+    ys = np.zeros(nsteps + 1)
+    vxs = np.zeros(nsteps + 1)
+    vys = np.zeros(nsteps + 1)
+
+    xs[0], ys[0], vxs[0], vys[0] = x, y, vx, vy
+
+    for i in range(nsteps):
+        x, y, vx, vy = euler_step_gr(x, y, vx, vy, dt, gr=gr, c_factor=c_factor)
+        t[i+1] = t[i] + dt
+        xs[i+1], ys[i+1], vxs[i+1], vys[i+1] = x, y, vx, vy
+
+    return t, xs, ys, vxs, vys, T
+
+
+
+# PERIHELION DETECTION & PRECESSION MEASUREMENT
+
+def find_perihelia(t, xs, ys):
+    """
+    Find perihelion trajectories by finding local minima in r(t) = sqrt(x² + y²).
+
+    Why we need to unwrap:
+      The perihelion advance sigma is a cumulative angular drift — each orbit,
+      the perihelion occurs at a slightly larger angle (= previous + sigma).
+      However, math.atan2(y, x) returns angles in [−π, π] format, which would include a
+      2π jump when the value crosses the +x axis (e.g. 3.13 -> −3.12). Without this correction,
+      the angle sequence will appear noisy and sigma cannot be measured.
+      Therefore we unwrap the angle manually: whenever the a jump > π (or < −π)
+      is detected, we add/subtract 2π .
+      This lets us fit a straight line and extract sigma as the slope.
+
+    Returns:
+        perihelion_indices: indices in the time array where perihelia occur
+        perihelion_angles: unwrapped angles (radians)
+    """
+
+    r = np.sqrt(xs**2 + ys**2)
+
+    # Find local minima (perihelia)
+    perihelion_indices = []
+    for i in range(1, len(r) - 1):
+        if r[i] < r[i-1] and r[i] < r[i+1]:
+            perihelion_indices.append(i)
+    perihelion_indices = np.array(perihelion_indices)
+
+    if len(perihelion_indices) == 0:
+        return perihelion_indices, np.array([])
+
+    # Angle from +x axis at each perihelion
+    angles_raw = np.array([math.atan2(ys[i], xs[i]) for i in perihelion_indices])
+
+    angles_unwrapped = [angles_raw[0]]
+    for i in range(1, len(angles_raw)):
+        delta = angles_raw[i] - angles_unwrapped[-1]
+        if delta < -math.pi:
+            delta += 2 * math.pi
+        elif delta > math.pi:
+            delta -= 2 * math.pi
+        angles_unwrapped.append(angles_unwrapped[-1] + delta)
+
+    return perihelion_indices, np.array(angles_unwrapped)
+
+
+def measure_precession(angles):
+    """Return mean perihelion advance per orbit (radians/orbit)."""
+    if len(angles) < 2:
+        return np.nan
+    return np.mean(np.diff(angles))
+
+
+def sigma_theory(a, e, T):
+    """
+    Predicted GR perihelion advance (Eq. 11):
+        σ = 24 * π³ * a² / [ T² * c² * (1 − e²) ]   (radians/orbit)
+    """
+    return 24 * math.pi**3 * a**2 / (T**2 * c_AU_per_yr**2 * (1 - e**2))
+
+
+
+# RUN & COMPARE (with wrapped plot)
+
+def run_c5():
+    a, e = 0.387, 0.2056
+    dt, orbits = 1e-4, 50
+    c_factor = 100.0
+
+    # Simulate orbits — GR state now influenced by USE_GR
+    t_n, xs_n, ys_n, _, _, T = integrate_orbit_gr(a, e, dt, orbits, gr=False)
+    t_g, xs_g, ys_g, _, _, _ = integrate_orbit_gr(a, e, dt, orbits, gr=USE_GR, c_factor=c_factor)
+
+    # Find perihelia
+    idxs_n, angles_n = find_perihelia(t_n, xs_n, ys_n)
+    idxs_g, angles_g = find_perihelia(t_g, xs_g, ys_g)
+
+    # Measure precession
+    sigma_meas = measure_precession(angles_g)
+    sigma_th = sigma_theory(a, e, T) * c_factor**2  
+
+    # PLOT 1: ORBITS : the perihelion advance predicted by GR is revealed only by tracking the cumulative angle over many orbits
+    plt.figure(figsize=(7,7))
+    plt.plot(xs_n, ys_n, lw=1, label="Newton (no GR)")
+    plt.plot(xs_g, ys_g, lw=1, label=f"GR (c' = c/{c_factor})" if USE_GR else "GR (disabled)")
+    plt.scatter(0, 0, s=150, color="orange", marker="*", zorder=10, label="Sun")
+    if len(idxs_g) > 0:
+        plt.scatter(xs_g[idxs_g], ys_g[idxs_g], s=30, color="red", label="GR perihelia")
+    plt.xlabel("x (AU)"); plt.ylabel("y (AU)")
+    plt.title("C5: GR Perihelion Advance (Amplified)")
+    plt.grid(alpha=0.3); plt.legend()
+    plt.tight_layout()
+    plt.show()
+    
+    # PLOT 2: PERIHELION VECTOR
+    plt.figure(figsize=(7,7))
+    plt.plot(xs_g, ys_g, lw=1, label="GR (c' = c/100)")
+    plt.scatter(0, 0, s=150, color="orange", marker="*", zorder=10, label="Sun")
+    for i in range(0, len(idxs_g), 5):  # every 5th perihelion
+        plt.arrow(0, 0, xs_g[idxs_g[i]], ys_g[idxs_g[i]], 
+                  head_width=0.002, head_length=0.003, fc='red', ec='red', alpha=0.6)
+    plt.grid(alpha=0.3); plt.legend()
+    plt.title("Perihelion vectors show rotation over 50 orbits")
+    plt.show()
+
+    # PLOT 3: WRAPPED vs UNWRAPPED
+    if len(angles_g) >= 3:
+        # Make wrapped version for comparison
+        angles_wrapped = (angles_g + np.pi) % (2 * np.pi) - np.pi
+
+        plt.figure(figsize=(8, 4.5))
+        orbit_numbers = np.arange(len(angles_g))
+        plt.plot(orbit_numbers, angles_wrapped, 'ro-', label='Wrapped angle (atan2)', markersize=6)
+        plt.plot(orbit_numbers, angles_g, 'bs--', label='Unwrapped angle (corrected)', markersize=6)
+        plt.xlabel('Perihelion passage (orbit number)')
+        plt.ylabel('Perihelion angle (radians)')
+        plt.title('Wrapped vs. Unwrapped perihelion angles')
+        plt.grid(alpha=0.4); plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    # RESULTS 
+    print("=== C5: GR PERIHELION ADVANCE ===")
+    print(f"USE_GR = {USE_GR}")
+    print(f"Semi-major axis a = {a:.3f} AU")
+    print(f"Eccentricity e     = {e:.4f}")
+    print(f"Kepler period T    = {T:.4f} yr")
+    if USE_GR:
+        print(f"c' = c / {c_factor} → GR amplified by {c_factor**2}×")
+    print(f"Perihelia detected = {len(angles_g)}")
+    if not np.isnan(sigma_meas):
+        print(f"Measured σ         = {sigma_meas:.6e} rad/orbit")
+        print(f"Theoretical σ      = {sigma_th:.6e} rad/orbit")
+        if USE_GR and sigma_th > 0:
+            frac_err = (sigma_meas - sigma_th) / sigma_th
+            print(f"Fractional error   = {frac_err:.2%}")
+    else:
+        print("Not enough perihelia to measure σ.")
+        
+
+
+run_c5()
