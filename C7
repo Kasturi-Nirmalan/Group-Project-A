@@ -1,0 +1,255 @@
+# C7: Animation of Mercury's orbit + perihelion advance
+# With trace color changing after each completed orbit
+
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+# PHYSICAL CONSTANTS (in astronomical units: AU, yr, M_sun)
+G = 4 * math.pi**2          # AU^3 / M_sun / yr^2
+M_sun = 1.0                 # mass of the Sun = 1 solar mass
+
+# c = 299792458 m/s, 1 AU = 149597870700 m, 1 yr = 365.25*24*3600 s
+c_AU_per_yr = 299792458 * 365.25 * 24 * 3600 / 149597870700  # ≈ 63239.7 AU/yr
+
+# SETTINGS
+USE_GR = True               
+C_FACTOR = 100.0            # c' = c / C_FACTOR
+dt = 5e-5                   # Time step (years)
+num_orbits = 50
+a = 0.387                   # Semi-major axis (AU)
+e = 0.2056                  # Eccentricity
+
+# Initial conditions at perihelion
+def get_initial_conditions(a, e):
+    """
+    Returns position and velocity at perihelion (closest point to Sun).
+    Derivation:
+      - Perihelion distance: r_p = a * (1 - e)
+      - Speed at perihelion from energy conservation: 
+          v_p = sqrt[ G M (1 + e) / (a (1 - e)) ]
+    We place Mercury on the +x axis, moving in +y direction.
+    """
+    r_peri = a * (1 - e)                          
+    v_peri = math.sqrt(G * (1 + e) / (a * (1 - e)))  
+    x0, y0 = r_peri, 0.0                           
+    vx0, vy0 = 0.0, v_peri                         
+    return x0, y0, vx0, vy0
+
+# Acceleration with optional GR correction
+def acceleration(x, y):
+    """
+    Compute acceleration of Mercury due to Sun’s gravity.
+    Newton:     a = -G M r_vec / r^3
+    GR (Eq.10): extra term = -(3/2) G^2 M^2 / (c^2 r^4) * r_vec
+    Note: c is replaced by c_eff = c / C_FACTOR to amplify GR.
+    """
+    r = math.sqrt(x**2 + y**2)   # distance from Sun (at origin)
+    if r == 0:
+        return 0.0, 0.0          # avoid division by zero
+
+    # Newtonian part: points toward the Sun
+    ax = -G * x / r**3
+    ay = -G * y / r**3
+
+    # Add GR correction only if USE_GR is True
+    if USE_GR:
+        c_eff = c_AU_per_yr / C_FACTOR
+        # Coefficient from Eq.(10): -(3/2) G² M² / (c_eff² r⁴)
+        gr_coeff = -1.5 * (G**2) * (M_sun**2) / (c_eff**2 * r**4)
+        ax += gr_coeff * x
+        ay += gr_coeff * y
+
+    return ax, ay
+
+# Euler–Cromer
+def simulate_orbit():
+    """
+    Simulate Mercury’s orbit for `num_orbits` using Euler–Cromer.
+    Returns:
+        t: time array (years)
+        xs, ys: position arrays (AU)
+        T: Kepler period (years)
+    """
+
+    x, y, vx, vy = get_initial_conditions(a, e)
+
+    T = a**1.5
+    total_time = num_orbits * T
+    nsteps = int(total_time / dt) + 1
+
+    # Arrays to store the orbit
+    t = np.zeros(nsteps)
+    xs = np.zeros(nsteps)
+    ys = np.zeros(nsteps)
+
+    # Store first point
+    xs[0], ys[0] = x, y
+
+    # Update position and velocity step by step
+    for i in range(1, nsteps):
+        # Get acceleration at current position
+        ax, ay = acceleration(x, y)
+
+        # Update velocity (Euler step)
+        vx += ax * dt
+        vy += ay * dt
+
+        # Update position using *new* velocity
+        x += vx * dt
+        y += vy * dt
+
+        # Save to arrays
+        t[i] = t[i-1] + dt
+        xs[i] = x
+        ys[i] = y
+
+    return t, xs, ys, T
+
+# FIND PERIHELIA
+def find_perihelia(xs, ys):
+    """
+    Perihelion = r = sqrt(x^2 + y^2).
+    find points where r[i] < r[i-1] and r[i] < r[i+1].
+    Returns indices in the time array where perihelia occur.
+    """
+    r = np.sqrt(xs**2 + ys**2)
+    perihelion_indices = []
+    for i in range(1, len(r) - 1):
+        if r[i] < r[i-1] and r[i] < r[i+1]:
+            perihelion_indices.append(i)
+    return np.array(perihelion_indices)
+
+# RUN SIMULATION
+t, xs, ys, T = simulate_orbit()
+perihelion_idxs = find_perihelia(xs, ys)
+
+# Get angles at each perihelion
+angles_raw = np.array([math.atan2(ys[i], xs[i]) for i in perihelion_idxs])
+
+# Unwrap angles: remove artificial 2π jumps (e.g. 3.1 -> -3.1 becomes 3.1 -> 3.2)
+# Lets us see the cumulative drift due to GR.
+angles_unwrapped = np.unwrap(angles_raw)
+
+# ANIMATION
+fig, (ax_orbit, ax_angle) = plt.subplots(1, 2, figsize=(12, 5))
+
+# Orbit plot (left)
+ax_orbit.set_xlim(-0.5, 0.5)
+ax_orbit.set_ylim(-0.4, 0.4)
+ax_orbit.set_aspect('equal')
+ax_orbit.set_xlabel('x (AU)')
+ax_orbit.set_ylabel('y (AU)')
+ax_orbit.set_title(f'Mercury orbit ({num_orbits} orbits, GR={"ON" if USE_GR else "OFF"})')
+ax_orbit.grid(alpha=0.3)
+
+# Sun at origin
+sun = ax_orbit.scatter([0], [0], s=200, color='orange', marker='*', label='Sun', zorder=10)
+
+# Mercury (starts at perihelion on +x axis)
+mercury, = ax_orbit.plot([], [], 'bo', markersize=8, label='Mercury')
+
+# Trace: draw completed orbits in colours
+# List to hold completed orbit segments
+completed_orbit_lines = []
+
+# Current-orbit trace (partial orbit, black)
+current_trace, = ax_orbit.plot([], [], 'k-', lw=1.5, alpha=0.9, label='Current orbit')
+
+# Mark perihelia as they occur
+perihelion_points, = ax_orbit.plot([], [], 'ro', markersize=4, label='Perihelia')
+ax_orbit.legend(loc='upper right')
+
+# Angle plot (right)
+n_peri = len(perihelion_idxs)
+ax_angle.set_xlim(0, max(n_peri, 1))
+if n_peri > 0:
+    ax_angle.set_ylim(min(angles_unwrapped) - 0.1, max(angles_unwrapped) + 0.1)
+ax_angle.set_xlabel('Perihelion number (orbit #)')
+ax_angle.set_ylabel('Perihelion angle (radians)')
+ax_angle.set_title('Cumulative perihelion angle')
+ax_angle.grid(alpha=0.3)
+
+# Line showing angle growth
+angle_line, = ax_angle.plot([], [], 'ro-', label='Angle')
+ax_angle.legend()
+
+# Track which perihelia have been plotted & completed orbits
+plotted_peri = set()
+
+# List of colours for orbits
+orbit_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown']
+
+# Speed up animation by skipping frames
+FRAME_SKIP = 20 
+
+def animate(frame):
+    global plotted_peri, completed_orbit_lines
+
+    actual = frame * FRAME_SKIP
+    if actual >= len(xs):
+        return mercury, current_trace, perihelion_points, angle_line, *completed_orbit_lines
+
+    # Update Mercury position
+    mercury.set_data([xs[actual]], [ys[actual]])
+
+    # DRAW COMPLETED ORBITS
+    # Remove old completed-orbit lines
+    for line in completed_orbit_lines:
+        line.remove()
+    completed_orbit_lines.clear()
+
+    # Add lines for every fully completed orbit (perihelion_i -> perihelion_{i+1})
+    for i in range(len(perihelion_idxs) - 1):
+        if perihelion_idxs[i + 1] <= actual:  # orbit i is complete
+            start = perihelion_idxs[i]
+            end = perihelion_idxs[i + 1] + 1
+            x_seg = xs[start:end]
+            y_seg = ys[start:end]
+            color = orbit_colors[i % len(orbit_colors)]
+            line, = ax_orbit.plot(x_seg, y_seg, '-', color=color, lw=1.2, alpha=0.8)
+            completed_orbit_lines.append(line)
+
+    # DRAW CURRENT (INCOMPLETE) ORBIT
+    # From last perihelion to current position
+    last_start = 0
+    for i, idx in enumerate(perihelion_idxs):
+        if idx <= actual:
+            last_start = idx
+        else:
+            break
+    x_current = xs[last_start:actual+1]
+    y_current = ys[last_start:actual+1]
+    current_trace.set_data(x_current, y_current)
+
+    # UPDATE PERIHELIA AND ANGLE
+    for i, idx in enumerate(perihelion_idxs):
+        if idx <= actual and i not in plotted_peri:
+            plotted_peri.add(i)
+
+    if plotted_peri:
+        peri_x = [xs[perihelion_idxs[i]] for i in plotted_peri]
+        peri_y = [ys[perihelion_idxs[i]] for i in plotted_peri]
+        perihelion_points.set_data(peri_x, peri_y)
+
+        n = len(plotted_peri)
+        angle_line.set_data(np.arange(n), angles_unwrapped[:n])
+
+        if n > 0:
+            curr_angles = angles_unwrapped[:n]
+            ax_angle.set_ylim(min(curr_angles) - 0.05, max(curr_angles) + 0.05)
+
+    return mercury, current_trace, perihelion_points, angle_line, *completed_orbit_lines
+
+# Run animation
+anim = animation.FuncAnimation(
+    fig, animate,
+    frames=len(xs) // FRAME_SKIP,
+    interval=50,
+    blit=True,
+    repeat=False
+)
+
+plt.tight_layout()
+plt.show()
