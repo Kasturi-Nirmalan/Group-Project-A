@@ -1,3 +1,5 @@
+'''i tried to run the code on my laptop but ran into some errors, i fixed these and added some things for clarity while i was working on it'''
+
 import numpy as np
 import math
 import matplotlib.pyplot as plt
@@ -221,3 +223,4 @@ plt.title('Error Comparison for Different Methods', fontsize=14)
 plt.legend()
 plt.grid(True)
 plt.show()
+
