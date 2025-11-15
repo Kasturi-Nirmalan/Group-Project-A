@@ -1,0 +1,223 @@
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+from scipy import stats
+
+
+G = 4 * math.pi**2  # gravitational constant 
+
+# his definition is the same as the one in Kasturi's C1, C2, C3, and C5 code
+def euler_circular_error(G=G, dt=1e-4, fraction=0.1):
+    """
+    Simulate circular orbit (a=1, e=0 -> T=1 yr) for a fraction of orbit.
+    Exact solution: x(t) = cos(2π * t / T), y(t) = sin(2π * t / T)
+    """
+    a = 1.0
+    # Initial conditions for circular orbit: r = a, v = sqrt(GM/a)
+    x, y = a, 0.0
+    vx, vy = 0.0, math.sqrt(G / a)  # since M=1
+
+    T = a**1.5
+    total_time = fraction * T
+    nsteps = int(total_time / dt)
+
+    # Euler-Cromer integration 
+    for _ in range(nsteps):
+        r = math.hypot(x, y)
+        ax = -G * x / r**3  # acceleration due to gravity
+        ay = -G * y / r**3
+        vx += ax * dt  # updates velocity
+        vy += ay * dt
+        x += vx * dt  # updates position
+        y += vy * dt
+
+    # Exact x at time = fraction * T
+    theta_exact = 2 * math.pi * fraction
+    x_exact = a * math.cos(theta_exact)
+    error = abs(x - x_exact)  # Calculate the error in x
+    return error
+
+
+# Implementing the leapfrog method
+def leapfrog_circular_error(dt=1e-4, fraction=0.1):
+
+    a = 1.0
+    # Initial conditions for circular orbit
+    x, y = a, 0.0
+    vx, vy = 0.0, math.sqrt(G / a)  # M=1
+
+    T = a**1.5
+    total_time = fraction * T
+    nsteps = int(total_time / dt)
+
+    def acc(x, y):  # acceleration due to gravity, returns ax and ay
+    
+        '''i changed the name from 'acceleration' to 'acc' throughout to
+        fix a name error and keep consistent'''
+        
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        return ax, ay
+
+    '''leapfrog method, takes a half-step for velocity 
+    and a full-step for position'''
+    
+    for _ in range(nsteps):
+        ax, ay = acc(x, y)
+
+        # half-step velocity update
+        vx_half = vx + 0.5 * ax * dt
+        vy_half = vy + 0.5 * ay * dt
+
+        # full-step position update
+        x_new = x + vx_half * dt
+        y_new = y + vy_half * dt
+
+        ax2, ay2 = acc(x_new, y_new)
+
+        # full-step velocity update
+        vx = vx_half + 0.5 * ax2 * dt
+        vy = vy_half + 0.5 * ay2 * dt
+
+        x, y = x_new, y_new
+
+    # exact x at time = fraction * T
+    theta_exact = 2 * math.pi * fraction
+    return abs(x - math.cos(theta_exact))  # error in x
+
+
+# Implementing RK2 (Midpoint method) for circular orbit error
+def rk2_circular_error(dt=1e-4, fraction=0.1):
+    """
+    Midpoint RK2 — 2nd order.
+    """
+    a = 1.0
+    x, y = a, 0.0
+    vx, vy = 0.0, math.sqrt(G / a)  # circular orbit velocity
+
+    T = a**1.5
+    total = fraction * T
+    nsteps = int(total / dt)
+
+    # defines the acceleration function
+    def acc(x, y):  
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        return ax, ay
+
+    # RK2 method
+    for _ in range(nsteps):
+        ax1, ay1 = acc(x, y)
+        k1x, k1y = vx, vy
+        k1vx, k1vy = ax1, ay1
+
+        xm = x + 0.5 * dt * k1x  # updates the midpoint
+        ym = y + 0.5 * dt * k1y
+        vmx = vx + 0.5 * dt * k1vx
+        vmy = vy + 0.5 * dt * k1vy
+
+        ax2, ay2 = acc(xm, ym)  # acceleration at midpoint
+
+        x += dt * vmx  # full-step position update
+        y += dt * vmy
+        vx += dt * ax2  # full-step velocity update
+        vy += dt * ay2
+
+    theta_exact = 2 * math.pi * fraction
+    return abs(x - math.cos(theta_exact))  
+
+
+# RK4 method copied from Amy
+def rk4_circular_error(dt=1e-4, fraction=0.1):
+    """
+    Simulating the RK4 (Runge Kutta 4) Method 
+    """
+    a = 1.0
+    G = 4 * math.pi**2
+    # Initial conditions for circular orbit
+    x, y = a, 0.0
+    vx, vy = 0.0, math.sqrt(G / a)  # M=1
+
+    T = a**1.5
+    total_time = fraction * T
+    nsteps = int(total_time / dt)
+
+    def acc(x, y):  # differentiation of x twice
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        return ax, ay
+
+    # RK4 method
+    for _ in range(nsteps):
+        ax1, ay1 = acc(x, y)    # k1 (like 1st time step)
+        k1x, k1y = vx, vy
+        k1vx, k1vy = ax1, ay1
+
+        ax2, ay2 = acc(x + k1x/2*dt, y + k1y/2*dt)  # k2 (second step) 
+        k2x, k2y = vx + k1vx/2*dt, vy + k1vy/2*dt
+        k2vx, k2vy = ax2, ay2
+
+        ax3, ay3 = acc(x + k2x/2*dt, y + k2y/2*dt)  # k3 (third step)
+        k3x, k3y = vx + k2vx/2*dt, vy + k2vy/2*dt
+        k3vx, k3vy = ax3, ay3
+
+        ax4, ay4 = acc(x + k3x*dt, y + k3y*dt)  # k4 (fourth step)
+        k4x, k4y = vx + k3vx*dt, vy + k3vy*dt
+        k4vx, k4vy = ax4, ay4
+
+        x = x + (dt/6.0) * (k1x + 2*k2x + 2*k3x + k4x)  # full-step position update
+        y = y + (dt/6.0) * (k1y + 2*k2y + 2*k3y + k4y)
+        vx = vx + (dt/6.0) * (k1vx + 2*k2vx + 2*k3vx + k4vx)  # full-step velocity update
+        vy = vy + (dt/6.0) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
+
+   
+    theta_exact = 2 * math.pi * fraction
+    x_exact = a * math.cos(theta_exact)
+    error = abs(x - x_exact)  
+    return error
+
+
+# time steps to test
+dts = np.array([1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5])
+
+# computes errors for each method
+errors_eu = np.array([euler_circular_error(dt) for dt in dts])
+errors_lf = np.array([leapfrog_circular_error(dt) for dt in dts])
+errors_rk2 = np.array([rk2_circular_error(dt) for dt in dts])
+errors_rk4 = np.array([rk4_circular_error(dt) for dt in dts])
+
+
+# editing code supplied by Amy
+def fitconvergence(dts, errors):    ## fit convergence 
+    log_dt = np.log10(dts)
+    log_err = np.log10(errors)
+    slope, intercept, r_value, _, std_err = stats.linregress(log_dt, log_err)
+    return slope, 10**intercept, r_value, std_err
+
+nfit_eu, _, corr_eu, std_eu = fitconvergence(dts, errors_eu)
+nfit_lf, _, corr_lf, std_lf = fitconvergence(dts, errors_lf)
+nfit_rk2, _, corr_rk2, std_rk2 = fitconvergence(dts, errors_rk2)
+nfit_rk4, _, corr_rk4, std_rk4 = fitconvergence(dts, errors_rk4)
+
+# prints the results
+print(f"Euler Convergence rate: {nfit_eu} ± {std_eu}")
+print(f"Leapfrog Convergence rate: {nfit_lf} ± {std_lf}")
+print(f"RK2 Convergence rate: {nfit_rk2} ± {std_rk2}")
+print(f"RK4 Convergence rate: {nfit_rk4} ± {std_rk4}")
+
+# plots errors as a function of dt
+plt.figure(figsize=(10, 6))
+plt.loglog(dts, errors_eu, label="Euler", marker='o')
+plt.loglog(dts, errors_lf, label="Leapfrog", marker='x')
+plt.loglog(dts, errors_rk2, label="RK2", marker='s')
+plt.loglog(dts, errors_rk4, label="RK4", marker='d')
+
+plt.xlabel('Time step (dt)', fontsize=12)
+plt.ylabel('Error in x', fontsize=12)
+plt.title('Error Comparison for Different Methods', fontsize=14)
+plt.legend()
+plt.grid(True)
+plt.show()
