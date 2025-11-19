@@ -1,0 +1,421 @@
+# c8: comparing euler–cromer and rk45 integrators for mercury's orbit
+
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.integrate import solve_ivp as solve_ivp_c8  # renamed for clarity
+
+# define constants in astronomical units
+G = 4 * math.pi**2
+M_sun = 1.0
+
+# helper function for kepler period
+def kepler_period_c8(a):
+    # kepler's third law: T^2 = a^3  →  T = a^(3/2)
+    return a**1.5
+
+# initial conditions function
+def initial_conditions_c8(a=0.387, e=0.2056):
+    # perihelion distance
+    r_peri = a * (1 - e)
+    # tangential velocity magnitude at perihelion
+    v_peri = math.sqrt(G * (1 + e) / (a * (1 - e)))
+    # at perihelion, velocity is purely tangential
+    x0, y0 = r_peri, 0.0
+    vx0, vy0 = 0.0, v_peri
+    return x0, y0, vx0, vy0
+
+# newtonian right-hand side for rk45 integration
+def rhs_newton_c8(t, y):
+    # unpack state vector
+    x, yy, vx, vy = y
+    # compute distance from sun
+    r = math.hypot(x, yy)
+    # gravitational acceleration components
+    ax = -G * x / r**3
+    ay = -G * yy / r**3
+    # return derivatives
+    return [vx, vy, ax, ay]
+
+# euler–cromer integration function
+def integrate_euler_cromer_c8(a, e, dt=1e-4, num_orbits=1):
+    # set initial position and velocity from perihelion
+    x, y, vx, vy = initial_conditions_c8(a, e)
+    # compute orbital period
+    T = kepler_period_c8(a)
+    total_time = num_orbits * T
+
+    # FIX: ensure Euler–Cromer ends EXACTLY at total_time
+    nsteps = int(total_time / dt)
+
+    # allocate arrays for trajectory storage
+    t = np.zeros(nsteps + 1)
+    xs = np.zeros(nsteps + 1)
+    ys = np.zeros(nsteps + 1)
+    vxs = np.zeros(nsteps + 1)
+    vys = np.zeros(nsteps + 1)
+
+    # store initial values
+    xs[0], ys[0], vxs[0], vys[0] = x, y, vx, vy
+
+    # perform integration using euler–cromer method
+    for i in range(nsteps):
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        vx += ax * dt
+        vy += ay * dt
+        x += vx * dt
+        y += vy * dt
+
+        # store state variables
+        t[i + 1] = t[i] + dt
+        xs[i + 1], ys[i + 1], vxs[i + 1], vys[i + 1] = x, y, vx, vy
+
+    return t, xs, ys, vxs, vys, T
+
+# rk45 integration using scipy's adaptive solver
+def integrate_rk45_c8(a, e, num_orbits=1, rtol=1e-10, atol=1e-12):
+    # retrieve initial values
+    x0, y0, vx0, vy0 = initial_conditions_c8(a, e)
+    y0_vec = [x0, y0, vx0, vy0]
+    T = kepler_period_c8(a)
+    t_span = (0.0, num_orbits * T)
+
+    # solve using rk45 with high precision
+    sol = solve_ivp_c8(
+        rhs_newton_c8,
+        t_span,
+        y0_vec,
+        method="RK45",
+        rtol=rtol,
+        atol=atol,
+        dense_output=True
+    )
+
+    # sample dense solution on uniform grid
+    t_eval = np.linspace(t_span[0], t_span[1], 5000 * num_orbits)
+    y_eval = sol.sol(t_eval)
+    xs, ys, vxs, vys = y_eval
+    return t_eval, xs, ys, vxs, vys, T, sol
+
+# function to compute rms and maximum errors
+def compute_errors_c8(xs_ref, ys_ref, vxs_ref, vys_ref, xs_test, ys_test, vxs_test, vys_test):
+    # compute position and velocity errors
+    dx = xs_test - xs_ref
+    dy = ys_test - ys_ref
+    dvx = vxs_test - vxs_ref
+    dvy = vys_test - vys_ref
+
+    # position magnitude error
+    pos_err = np.sqrt(dx**2 + dy**2)
+    vel_err = np.sqrt(dvx**2 + dvy**2)
+
+    # rms and max error values
+    rms_pos = np.sqrt(np.mean(pos_err**2))
+    max_pos = np.max(pos_err)
+    rms_vel = np.sqrt(np.mean(vel_err**2))
+    max_vel = np.max(vel_err)
+
+    return rms_pos, max_pos, rms_vel, max_vel
+
+# main routine for c8
+def run_c8():
+    # set orbital parameters for mercury
+    a = 0.387
+    e = 0.2056
+    dt = 1e-4
+    num_orbits = 1
+
+    # integrate using rk45 and euler–cromer
+    t_rk, x_rk, y_rk, vx_rk, vy_rk, T, sol_rk = integrate_rk45_c8(a, e, num_orbits)
+    t_ec, x_ec, y_ec, vx_ec, vy_ec, _ = integrate_euler_cromer_c8(a, e, dt, num_orbits)
+
+    # interpolate rk45 onto euler–cromer time grid for comparison
+    x_rk_i = np.interp(t_ec, t_rk, x_rk)
+    y_rk_i = np.interp(t_ec, t_rk, y_rk)
+    vx_rk_i = np.interp(t_ec, t_rk, vx_rk)
+    vy_rk_i = np.interp(t_ec, t_rk, vy_rk)
+
+    # compute error metrics
+    rms_pos, max_pos, rms_vel, max_vel = compute_errors_c8(
+        x_rk_i, y_rk_i, vx_rk_i, vy_rk_i,
+        x_ec, y_ec, vx_ec, vy_ec
+    )
+
+    # print numerical comparison summary
+    print(f"semi-major axis a = {a} au")
+    print(f"eccentricity e    = {e}")
+    print(f"period t          = {T:.6f} yr")
+    print(f"rk45 function evaluations = {sol_rk.nfev}")
+    print(f"euler–cromer step size dt = {dt}")
+    print(f"rms position error = {rms_pos:.3e} au")
+    print(f"max position error = {max_pos:.3e} au")
+    print(f"rms velocity error = {rms_vel:.3e} au/yr")
+    print(f"max velocity error = {max_vel:.3e} au/yr")
+
+    # store both results in csv files for verification
+    df_rk = pd.DataFrame({
+        "time_yr": t_rk,
+        "x_AU": x_rk,
+        "y_AU": y_rk,
+        "vx_AU_per_yr": vx_rk,
+        "vy_AU_per_yr": vy_rk
+    })
+    df_ec = pd.DataFrame({
+        "time_yr": t_ec,
+        "x_AU": x_ec,
+        "y_AU": y_ec,
+        "vx_AU_per_yr": vx_ec,
+        "vy_AU_per_yr": vy_ec
+    })
+
+    df_rk.to_csv("c8_rk45_solution.csv", index=False)
+    df_ec.to_csv("c8_eulercromer_vs_rk45.csv", index=False)
+    print("saved c8_rk45_solution.csv and c8_eulercromer_vs_rk45.csv")
+
+    # plot orbit comparison
+    plt.figure(figsize=(6,6))
+    plt.plot(x_rk, y_rk, color='red', linewidth=1.5, label='rk45 (scipy)')
+    plt.plot(x_ec, y_ec, color='blue', linewidth=1.5, label='euler–cromer')
+    plt.scatter(0, 0, color='orange', s=80, marker='*', label='sun', zorder=5)
+    plt.xlabel('x (au)')
+    plt.ylabel('y (au)')
+    plt.title('c8: orbital trajectory comparison')
+    plt.legend(loc='upper right')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # plot position error as function of time
+    pos_err = np.sqrt((x_ec - x_rk_i)**2 + (y_ec - y_rk_i)**2)
+    plt.figure(figsize=(7,4))
+    plt.plot(t_ec, pos_err, color='green', linewidth=1.3)
+    plt.xlabel('time (yr)')
+    plt.ylabel('position error (au)')
+    plt.title('position error between euler–cromer and rk45')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # plot velocity error as function of time
+    vel_err = np.sqrt((vx_ec - vx_rk_i)**2 + (vy_ec - vy_rk_i)**2)
+    plt.figure(figsize=(7,4))
+    plt.plot(t_ec, vel_err, color='purple', linewidth=1.3)
+    plt.xlabel('time (yr)')
+    plt.ylabel('velocity error (au/yr)')
+    plt.title('velocity error between euler–cromer and rk45')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    run_c8()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# c9: investigating energy conservation for mercury's orbit
+
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp as solve_ivp_c9  # renamed for consistency
+
+# gravitational constant in au^3 / (m_sun * yr^2)
+G = 4 * math.pi**2
+M_sun = 1.0
+
+# helper function to compute kepler period
+def kepler_period_c9(a):
+    # from kepler's third law: T^2 = a^3  →  T = a^(3/2)
+    return a**1.5
+
+# initial conditions function
+def initial_conditions_c9(a=0.387, e=0.2056):
+    # compute perihelion distance and velocity
+    r_peri = a * (1 - e)
+    v_peri = math.sqrt(G * (1 + e) / (a * (1 - e)))
+    # at perihelion, velocity is tangential
+    x0, y0 = r_peri, 0.0
+    vx0, vy0 = 0.0, v_peri
+    return x0, y0, vx0, vy0
+
+# right-hand side for newtonian motion (for rk45 solver)
+def rhs_newton_c9(t, y):
+    # unpack position and velocity
+    x, yy, vx, vy = y
+    # compute radial distance
+    r = math.hypot(x, yy)
+    # compute gravitational acceleration components
+    ax = -G * x / r**3
+    ay = -G * yy / r**3
+    # return derivatives
+    return [vx, vy, ax, ay]
+
+# euler–cromer integration function
+def integrate_euler_cromer_c9(a, e, dt=1e-4, num_orbits=1):
+    # get initial conditions
+    x, y, vx, vy = initial_conditions_c9(a, e)
+    # compute kepler period and total time
+    T = kepler_period_c9(a)
+    total_time = num_orbits * T
+    nsteps = int(np.ceil(total_time / dt))
+
+    # preallocate arrays
+    t = np.zeros(nsteps + 1)
+    xs = np.zeros(nsteps + 1)
+    ys = np.zeros(nsteps + 1)
+    vxs = np.zeros(nsteps + 1)
+    vys = np.zeros(nsteps + 1)
+
+    # store initial state
+    xs[0], ys[0], vxs[0], vys[0] = x, y, vx, vy
+
+    # main integration loop
+    for i in range(nsteps):
+        r = math.hypot(x, y)
+        ax = -G * x / r**3
+        ay = -G * y / r**3
+        vx += ax * dt
+        vy += ay * dt
+        x += vx * dt
+        y += vy * dt
+
+        # record current values
+        t[i + 1] = t[i] + dt
+        xs[i + 1], ys[i + 1], vxs[i + 1], vys[i + 1] = x, y, vx, vy
+
+    return t, xs, ys, vxs, vys, T
+
+# rk45 integration using scipy adaptive solver
+def integrate_rk45_c9(a, e, num_orbits=1, rtol=1e-10, atol=1e-12):
+    # get initial state
+    x0, y0, vx0, vy0 = initial_conditions_c9(a, e)
+    y0_vec = [x0, y0, vx0, vy0]
+    T = kepler_period_c9(a)
+    t_span = (0.0, num_orbits * T)
+
+    # integrate using scipy rk45 with tight tolerances
+    sol = solve_ivp_c9(
+        rhs_newton_c9,
+        t_span,
+        y0_vec,
+        method='RK45',
+        rtol=rtol,
+        atol=atol,
+        dense_output=True
+    )
+
+    # evaluate solution on uniform grid
+    t_eval = np.linspace(t_span[0], t_span[1], 5000 * num_orbits)
+    y_eval = sol.sol(t_eval)
+    xs, ys, vxs, vys = y_eval
+    return t_eval, xs, ys, vxs, vys, T
+
+# compute kinetic, potential, and total energy
+def energies_c9(xs, ys, vxs, vys):
+    v2 = vxs**2 + vys**2
+    r = np.hypot(xs, ys)
+    ke = 0.5 * v2
+    pe = -G * M_sun / r
+    te = ke + pe
+    return ke, pe, te
+
+# main c9 analysis function
+def run_c9():
+    # set orbital parameters
+    a = 0.387
+    e = 0.2056
+    num_orbits = 1
+    dt = 1e-4
+
+    # integrate orbit with both solvers
+    t_rk, x_rk, y_rk, vx_rk, vy_rk, T = integrate_rk45_c9(a, e, num_orbits)
+    t_ec, x_ec, y_ec, vx_ec, vy_ec, _ = integrate_euler_cromer_c9(a, e, dt, num_orbits)
+
+    # compute energies
+    ke_rk, pe_rk, te_rk = energies_c9(x_rk, y_rk, vx_rk, vy_rk)
+    ke_ec, pe_ec, te_ec = energies_c9(x_ec, y_ec, vx_ec, vy_ec)
+
+    # print diagnostic data
+    print("c9 energy investigation")
+    print(f"semi-major axis a = {a} au")
+    print(f"eccentricity e    = {e}")
+    print(f"period t          = {T:.6f} yr")
+    print(f"average total energy rk45  = {np.mean(te_rk):.6f}")
+    print(f"std deviation rk45         = {np.std(te_rk):.6e}")
+    print(f"average total energy ec    = {np.mean(te_ec):.6f}")
+    print(f"std deviation ec           = {np.std(te_ec):.6e}")
+
+    # plot total energy for both methods
+    plt.figure(figsize=(7,4))
+    plt.plot(t_rk, te_rk, color='red', linewidth=1.5, label='rk45 total energy')
+    plt.plot(t_ec, te_ec, color='blue', linewidth=1.2, label='euler–cromer total energy')
+    plt.xlabel('time (yr)')
+    plt.ylabel('specific total energy (au²/yr²)')
+    plt.title('c9: energy conservation comparison')
+    plt.legend(loc='lower left')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # compute difference between total energies
+    te_rk_interp = np.interp(t_ec, t_rk, te_rk)
+    diff = te_ec - te_rk_interp
+
+    # plot energy difference
+    plt.figure(figsize=(7,4))
+    plt.plot(t_ec, diff, color='green', linewidth=1.3, label='energy difference (ec - rk45)')
+    plt.xlabel('time (yr)')
+    plt.ylabel('ΔE (au²/yr²)')
+    plt.title('energy difference over time')
+    plt.legend(loc='upper right')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # zoom in on a portion of the energy curves
+    plt.figure(figsize=(7,4))
+    plt.plot(t_rk, te_rk, color='red', linewidth=1.5, label='rk45')
+    plt.plot(t_ec, te_ec, color='blue', linewidth=1.3, label='euler–cromer')
+    plt.xlim(0.05, 0.10)
+    plt.ylim(np.min(te_rk) - 1e-3, np.max(te_rk) + 1e-3)
+    plt.xlabel('time (yr)')
+    plt.ylabel('specific total energy (au²/yr²)')
+    plt.title('zoomed view of total energy oscillation')
+    plt.legend(loc='upper right')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    run_c9()
