@@ -1,0 +1,218 @@
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+
+# Physical constants in astronomical units (AU), solar masses, years
+G = 4 * math.pi**2
+M_sun = 1.0
+c_AU_per_yr = 63239.7263  # speed of light in AU/yr
+
+def initial_conditions(a=0.387, e=0.2056):
+    """Return initial (x0, y0, vx0, vy0) at perihelion plus r_p, v_p."""
+    r_p = a * (1.0 - e)
+    v_p = math.sqrt(G * M_sun * (1.0 + e) / (a * (1.0 - e)))
+    x0, y0 = r_p, 0.0
+    vx0, vy0 = 0.0, v_p
+    return x0, y0, vx0, vy0, r_p, v_p
+
+def acceleration(x, y, gr=False, c_factor=100.0):
+    """Compute acceleration with optional GR correction."""
+    r = math.hypot(x, y)
+    if r == 0.0:
+        return 0.0, 0.0
+    # Newtonian part
+    a_newton = -G * M_sun / (r**3)
+    ax = a_newton * x
+    ay = a_newton * y
+    # GR correction if requested
+    if gr:
+        c_eff = c_AU_per_yr / c_factor
+        a_gr = - (3.0 * (G**2) * (M_sun**2)) / (2.0 * (c_eff**2) * (r**4))
+        ax += a_gr * x
+        ay += a_gr * y
+    return ax, ay
+
+def euler_step(x, y, vx, vy, dt, gr=False, c_factor=100.0):
+    """Euler–Cromer update: update velocity then position."""
+    ax, ay = acceleration(x, y, gr=gr, c_factor=c_factor)
+    vx_new = vx + ax * dt
+    vy_new = vy + ay * dt
+    x_new = x + vx_new * dt
+    y_new = y + vy_new * dt
+    return x_new, y_new, vx_new, vy_new
+
+def integrate_orbit(a=0.387, e=0.2056, dt=1e-4, num_orbits=50, gr=False, c_factor=100.0):
+    """Integrate orbit for given parameters, return time & arrays & Kepler period."""
+    x, y, vx, vy, r_p, v_p = initial_conditions(a, e)
+    T = a**1.5  # Kepler period: T² = a³
+    total_time = num_orbits * T
+    nsteps = int(np.ceil(total_time / dt))
+    t = np.zeros(nsteps + 1)
+    xs = np.zeros(nsteps + 1)
+    ys = np.zeros(nsteps + 1)
+    vxs = np.zeros(nsteps + 1)
+    vys = np.zeros(nsteps + 1)
+    xs[0], ys[0], vxs[0], vys[0] = x, y, vx, vy
+
+    for i in range(nsteps):
+        x, y, vx, vy = euler_step(x, y, vx, vy, dt, gr=gr, c_factor=c_factor)
+        t[i+1] = t[i] + dt
+        xs[i+1] = x
+        ys[i+1] = y
+        vxs[i+1] = vx
+        vys[i+1] = vy
+
+    return t, xs, ys, vxs, vys, T
+
+def find_perihelia(t, xs, ys):
+    """Find local minima in r(t) and return indices, times, radii, and unwrapped angles."""
+    r = np.hypot(xs, ys)
+    idxs = []
+    times = []
+    radii = []
+    angles = []
+    for i in range(1, len(r)-1):
+        if r[i] < r[i-1] and r[i] < r[i+1]:
+            idxs.append(i)
+            times.append(t[i])
+            radii.append(r[i])
+            angles.append(math.atan2(ys[i], xs[i]))
+    idxs = np.array(idxs, dtype=int)
+    times = np.array(times)
+    radii = np.array(radii)
+    angles = np.unwrap(np.array(angles))
+    return idxs, times, radii, angles
+
+def measure_precession(angles):
+    """Return (mean, std, sem) of perihelion advance per orbit."""
+    if len(angles) < 2:
+        return float('nan'), float('nan'), float('nan')
+    dtheta = np.diff(angles)
+    sigma_mean = float(np.mean(dtheta))
+    sigma_std = float(np.std(dtheta, ddof=1))
+    sigma_sem = sigma_std / math.sqrt(len(dtheta))
+    return sigma_mean, sigma_std, sigma_sem
+
+def sigma_theory(a, e, T, c_factor=100.0, use_gr=True):
+    """Analytical perihelion advance per revolution (radians)."""
+    if not use_gr:
+        return 0.0
+    c_eff = c_AU_per_yr / c_factor
+    num = 24.0 * (math.pi**3) * (a**2)
+    den = (T**2) * (c_eff**2) * (1.0 - e**2)
+    return num / den
+
+def plot_orbits(xs_n, ys_n, xs_g, ys_g, idxs_n, idxs_g, a, e, dt, T):
+    plt.figure(figsize=(7,7))
+    plt.plot(xs_n, ys_n, lw=1.3, label="Newton (no GR)")
+    plt.plot(xs_g, ys_g, lw=1.3, label="GR turned on")
+    plt.scatter(0.0, 0.0, s=120, color="orange", marker="*", label="Sun")
+    if len(idxs_n)>0:
+        plt.scatter(xs_n[idxs_n], ys_n[idxs_n], s=18, label="perihelia (Newton)")
+    if len(idxs_g)>0:
+        plt.scatter(xs_g[idxs_g], ys_g[idxs_g], s=18, label="perihelia (GR)")
+    plt.gca().set_aspect('equal', 'box')
+    plt.xlabel("x (AU)")
+    plt.ylabel("y (AU)")
+    plt.title(f"Orbit with/without GR  dt={dt:.2e} yr, T≈{T:.4f} yr")
+    plt.legend(loc="upper right")
+    plt.grid(True, alpha=0.35)
+    plt.show()
+
+def plot_perihelion_angles(angles_g):
+    if len(angles_g) < 2:
+        return
+    orbits = np.arange(len(angles_g))
+    plt.figure(figsize=(6.5, 4.2))
+    plt.plot(orbits, angles_g, marker="o", ms=3, lw=1.2)
+    plt.xlabel("Perihelion count")
+    plt.ylabel("Perihelion angle (radians)")
+    plt.title("Growth of perihelion angle with GR")
+    plt.grid(True, alpha=0.4)
+    plt.show()
+
+def plot_perihelion_vectors(xs_g, ys_g, idxs_g):
+    """Plot perihelion vectors from the Sun to several perihelion points."""
+    if len(idxs_g)==0:
+        return
+    plt.figure(figsize=(7,7))
+    plt.plot(xs_g, ys_g, lw=1, label="GR orbit")
+    plt.scatter(0.0, 0.0, s=150, color='orange', marker='*', zorder=10, label="Sun")
+    for i in range(0, len(idxs_g), max(1,len(idxs_g)//20)):  # roughly 20 arrows
+        xi = xs_g[idxs_g[i]]
+        yi = ys_g[idxs_g[i]]
+        plt.arrow(0, 0, xi, yi, head_width=0.002, head_length=0.003,
+                  fc='red', ec='red', alpha=0.6)
+    plt.xlabel("x (AU)")
+    plt.ylabel("y (AU)")
+    plt.title("Perihelion vectors showing rotation over orbits")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.gca().set_aspect('equal', 'box')
+    plt.show()
+
+def run_c5(a=0.387, e=0.2056, dt=1e-4, num_orbits=50, c_factor=100.0):
+    # Newtonian run
+    t_n, xs_n, ys_n, vxs_n, vys_n, T = integrate_orbit(a=a, e=e, dt=dt,
+                                                     num_orbits=num_orbits,
+                                                     gr=False, c_factor=c_factor)
+    # GR-corrected run
+    t_g, xs_g, ys_g, vxs_g, vys_g, _ = integrate_orbit(a=a, e=e, dt=dt,
+                                                      num_orbits=num_orbits,
+                                                      gr=True, c_factor=c_factor)
+
+    idxs_n, times_n, radii_n, angles_n = find_perihelia(t_n, xs_n, ys_n)
+    idxs_g, times_g, radii_g, angles_g = find_perihelia(t_g, xs_g, ys_g)
+
+    sigma_mean, sigma_std, sigma_sem = measure_precession(angles_g)
+    sigma_th = sigma_theory(a=a, e=e, T=T, c_factor=c_factor, use_gr=True)
+
+    # Plots
+    plot_orbits(xs_n, ys_n, xs_g, ys_g, idxs_n, idxs_g, a, e, dt, T)
+    plot_perihelion_angles(angles_g)
+    plot_perihelion_vectors(xs_g, ys_g, idxs_g)
+
+    # Print summary
+    print("GR PERIHELION ADVANCE")
+    print(f"Semi-major axis a = {a:.6f} AU")
+    print(f"Eccentricity e     = {e:.6f}")
+    print(f"Kepler period T    = {T:.6f} years")
+    print(f"Time-step dt       = {dt:.2e} years")
+    print(f"Orbits simulated   = {num_orbits}")
+    print(f"GR scaling: c' = c / {c_factor:.0f}")
+    if not math.isnan(sigma_mean):
+        print(f"Measured σ         = {sigma_mean:.6e} rad/orbit")
+        print(f"One-sigma scatter  = {sigma_std:.6e} rad")
+        print(f"Standard error     = {sigma_sem:.6e} rad")
+    else:
+        print("Not enough perihelia to measure σ.")
+    print(f"Theoretical σ      = {sigma_th:.6e} rad/orbit")
+    if sigma_th > 0 and not math.isnan(sigma_mean):
+        frac_err = (sigma_mean - sigma_th) / sigma_th
+        print(f"Fractional bias    = {frac_err:.3e}")
+
+def run_c5_real_c(a=0.387, e=0.2056, dt=1e-4, num_orbits=12):
+    """Run the simulation with real speed of light (c_factor=1) for real-physics benchmark."""
+    t_g, xs_g, ys_g, vxs_g, vys_g, T = integrate_orbit(a=a, e=e, dt=dt,
+                                                     num_orbits=num_orbits,
+                                                     gr=True, c_factor=1.0)
+    idxs_g, times_g, radii_g, angles_g = find_perihelia(t_g, xs_g, ys_g)
+    sigma_meas, _, _ = measure_precession(angles_g)  # just mean we care here
+    sigma_th = sigma_theory(a=a, e=e, T=T, c_factor=1.0, use_gr=True)
+
+    print("REAL-c RUN")
+    print(f"Orbits simulated   = {num_orbits}")
+    print(f"Time-step dt       = {dt:.2e} years")
+    if not math.isnan(sigma_meas):
+        print(f"Measured σ         = {sigma_meas:.6e} rad/orbit")
+    else:
+        print("Not enough perihelia to measure σ.")
+    print(f"Theoretical σ      = {sigma_th:.6e} rad/orbit")
+    if sigma_th > 0 and not math.isnan(sigma_meas):
+        frac_err = (sigma_meas - sigma_th) / sigma_th
+        print(f"Fractional bias    = {frac_err:.3e}")
+
+if __name__ == "__main__":
+    run_c5()
+    # Optionally also call the real‐c run:
+    run_c5_real_c()
