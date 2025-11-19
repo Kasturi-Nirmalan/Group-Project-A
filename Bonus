@@ -1,0 +1,101 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Constants and masses (AU, years, solar masses)
+G = 4 * np.pi**2      # AU^3 / (Msun * yr^2)
+
+m1 = 1.0             # body 1 mass
+m2 = 0.8             # body 2 mass (near-equal system)
+M = m1 + m2          # total mass
+
+# Initial conditions in the one-body (relative) frame
+a_rel = 1.0  # AU (initial separation)
+
+# orbital period using Kepler's law: T^2 = a^3 / M
+T_orbit = np.sqrt(a_rel**3 / M)
+omega = 2 * np.pi / T_orbit
+v_rel = omega * a_rel  # circular speed
+
+x_rel0 = a_rel
+y_rel0 = 0.0
+vx_rel0 = 0.0
+vy_rel0 = v_rel
+
+# Derivative function
+def derivatives(state):
+    x, y, vx, vy = state
+    r = np.sqrt(x*x + y*y)
+    ax = -G * M * x / r**3
+    ay = -G * M * y / r**3
+    return np.array([vx, vy, ax, ay])
+
+# RK4
+def rk4_step(state, dt):
+    k1 = derivatives(state)
+    k2 = derivatives(state + 0.5 * dt * k1)
+    k3 = derivatives(state + 0.5 * dt * k2)
+    k4 = derivatives(state + dt * k3)
+    return state + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
+
+# Time evolution
+dt = T_orbit / 1000.0
+n_orbits = 3.0
+t_final = n_orbits * T_orbit
+n_steps = int(t_final / dt)
+
+state = np.array([x_rel0, y_rel0, vx_rel0, vy_rel0])
+
+xs_rel, ys_rel = [], []
+xs1, ys1 = [], []
+xs2, ys2 = [], []
+
+for _ in range(n_steps):
+    x_rel, y_rel, vx_rel, vy_rel = state
+    xs_rel.append(x_rel)
+    ys_rel.append(y_rel)
+
+    x1 = (m2 / M) * x_rel
+    y1 = (m2 / M) * y_rel
+    x2 = -(m1 / M) * x_rel
+    y2 = -(m1 / M) * y_rel
+
+    xs1.append(x1)
+    ys1.append(y1)
+    xs2.append(x2)
+    ys2.append(y2)
+
+    state = rk4_step(state, dt)
+
+xs_rel = np.array(xs_rel)
+ys_rel = np.array(ys_rel)
+xs1 = np.array(xs1)
+ys1 = np.array(ys1)
+xs2 = np.array(xs2)
+ys2 = np.array(ys2)
+
+# Plot with legends lower
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+plt.subplots_adjust(bottom=0.38, wspace=0.35)
+
+# Left Panel
+axes[0].plot(xs_rel, ys_rel, label='Relative orbit')
+axes[0].scatter(0, 0, color='orange', s=60, label='Centre of mass')
+axes[0].set_aspect('equal')
+axes[0].set_xlabel('x_rel (AU)')
+axes[0].set_ylabel('y_rel (AU)')
+axes[0].set_title('Relative motion in one-body frame')
+
+axes[0].legend(loc='lower center', bbox_to_anchor=(0.5, -0.5))
+
+# Right Panel 
+axes[1].plot(xs1, ys1, label=f'Body 1 (m1 = {m1})')
+axes[1].plot(xs2, ys2, label=f'Body 2 (m2 = {m2})')
+axes[1].scatter(0, 0, color='black', s=25, label='Centre of mass')
+axes[1].set_aspect('equal')
+axes[1].set_xlabel('x (AU)')
+axes[1].set_ylabel('y (AU)')
+axes[1].set_title('Two-body motion in COM frame')
+
+axes[1].legend(loc='lower center', bbox_to_anchor=(0.5, -0.5))
+
+plt.show()
